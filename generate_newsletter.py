@@ -70,7 +70,7 @@ def make_client():
         api_key="dummy",
         default_headers={
             "Ocp-Apim-Subscription-Key": API_KEY,
-            "user": os.getlogin() if hasattr(os, "getlogin") else "github-actions",
+            "user": "github-actions",
         },
     )
 
