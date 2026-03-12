@@ -115,8 +115,13 @@ def call_llm(client, section_prompt: str, section_name: str) -> str:
         log.warning("  Empty response for %s — using placeholder.", section_name)
         return f"Content for {section_name} could not be generated at this time."
 
-    # Strip any markdown symbols the model sneaks in
+    # Strip markdown symbols and replace special characters that
+    # don't render correctly in ReportLab's built-in fonts
     content = re.sub(r"[#*`]+", "", content)
+    content = content.replace("—", "-").replace("–", "-")   # em/en dash -> hyphen
+    content = content.replace("‘", "'").replace("’", "'")   # smart single quotes
+    content = content.replace("“", '"').replace("”", '"')   # smart double quotes
+    content = content.replace("…", "...")                         # ellipsis
     return content.strip()
 
 
@@ -188,6 +193,15 @@ analysis of AMD financials, gaming market trends, and competitive positioning.
 End with one forward-looking sentence about what to watch in the coming weeks.
 Write in plain prose. No markdown.
 """, "Key Takeaways")
+
+    # --- TLDR ---
+    sections["tldr"] = call_llm(client, f"""
+Write a TLDR (Too Long; Didn't Read) summary for an AMD investor newsletter dated {date_str}.
+This should be 3-4 punchy single-sentence bullet points (written as plain sentences separated
+by blank lines, NO bullet symbols, NO dashes, NO asterisks) summarising the absolute most
+important takeaways from this week's AMD financials, gaming market trends, and competitor
+analysis. Each point should be one sentence maximum. Write in plain prose only.
+""", "TLDR")
 
     return sections
 
@@ -296,7 +310,9 @@ def build_pdf(sections: dict, output_path: Path, date_str: str) -> None:
 
     # ---- Masthead banner ----
     masthead_data = [[
-        Paragraph("AMD WEEKLY FINANCE NEWSLETTER", styles["masthead_title"]),
+        Paragraph("AMD WEEKLY FINANCE", styles["masthead_title"]),
+    ], [
+        Paragraph("NEWSLETTER", styles["masthead_title"]),
     ], [
         Paragraph(f"Market Intelligence &amp; Competitive Analysis  |  {date_str}", styles["masthead_sub"]),
     ]]
@@ -326,6 +342,31 @@ def build_pdf(sections: dict, output_path: Path, date_str: str) -> None:
         ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
     ]))
     story.append(tag_table)
+    story.append(Spacer(1, 16))
+
+    # ---- TLDR box ----
+    tldr_style = ParagraphStyle(
+        "tldr_body", fontSize=10, fontName="Helvetica",
+        textColor=AMD_DARK, leading=16, spaceAfter=6, alignment=TA_LEFT
+    )
+    tldr_label = ParagraphStyle(
+        "tldr_label", fontSize=11, fontName="Helvetica-Bold",
+        textColor=colors.white, alignment=TA_LEFT, spaceAfter=4
+    )
+    tldr_rows = [[Paragraph("TL;DR  -  This Week at a Glance", tldr_label)]]
+    for p in split_paragraphs(sections["tldr"]):
+        tldr_rows.append([Paragraph(p, tldr_style)])
+    tldr_table = Table(tldr_rows, colWidths=[W])
+    tldr_table.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (0, 0), AMD_DARK),
+        ("BACKGROUND",    (0, 1), (-1, -1), AMD_LIGHT),
+        ("BOX",           (0, 0), (-1, -1), 1, AMD_DARK),
+        ("TOPPADDING",    (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 14),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 14),
+    ]))
+    story.append(tldr_table)
     story.append(Spacer(1, 16))
 
     # ---- Editor's Note ----
@@ -418,8 +459,26 @@ def commit_and_push(output_path: Path, file_date: str) -> None:
         return
 
     origin = repo.remote(name=GIT_REMOTE)
+
+    # Stash any local changes before pulling to avoid conflicts
+    try:
+        stash_result = repo.git.stash()
+        stashed = "No local changes" not in stash_result
+        if stashed:
+            log.info("Stashed local changes")
+    except Exception:
+        stashed = False
+
     log.info("Pulling latest changes...")
     origin.pull(rebase=True)
+
+    # Restore stashed changes
+    if stashed:
+        try:
+            repo.git.stash("pop")
+            log.info("Restored stashed changes")
+        except Exception:
+            pass
 
     timestamp  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     commit_msg = f"chore(newsletter): publish AMD finance newsletter [{timestamp}]"
