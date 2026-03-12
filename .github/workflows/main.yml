@@ -1,0 +1,43 @@
+name: AMD Finance Newsletter Generator
+
+on:
+  workflow_dispatch: # Manual trigger from GitHub UI
+  schedule:
+    - cron: "0 7 * * 1" # Every Monday at 07:00 UTC
+
+jobs:
+  generate-newsletter:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install openai==1.101.0 reportlab
+
+      - name: Generate newsletter PDF
+        env:
+          PROJECT_API_KEY: ${{ secrets.PROJECT_API_KEY }}
+        run: python generate_newsletter.py
+
+      - name: Commit and push newsletter
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add newsletters/
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
+            git commit -m "chore(newsletter): publish AMD finance newsletter [$TIMESTAMP]"
+            git push
+          fi
